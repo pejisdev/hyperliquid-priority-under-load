@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""make_tables.py : every table the figure reads, from the raw histograms in data/opens (one pass, no download).
+"""make_tables.py [DATA_DIR] : every table the figure reads, from the raw histograms in DATA_DIR/opens (default data/; one pass, no download).
 
 Inputs : data/opens/<date>.hist.csv.gz (actlat output, gzipped) and data/opens.csv
 Outputs: data/latency_by_open.csv       date,hardfork,load_band,family,n,median_ms
@@ -8,11 +8,11 @@ Outputs: data/latency_by_open.csv       date,hardfork,load_band,family,n,median_
          data/load_curve_5000.csv       period,family,load_from,n,median_ms
 Medians are taken on 10 ms bins and reported as the bin's middle (lower edge + 5).
 """
-import csv, gzip, os, re
+import csv, gzip, os, re, sys
 from collections import defaultdict
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA = os.path.join(ROOT, 'data')
+DATA = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, 'data')
 
 # family -> regex on actlat's kind. alo_order and alo_order_fee are split by priority fee; alo_order_any pools both.
 FAMILIES = [
@@ -73,4 +73,4 @@ key = lambda x: (PER.index(x[0][0]), ci[x[0][1]]) + tuple(x[0][2:])
 write('latency_40k_by_period.csv', ['period', 'family', 'n', 'median_ms'], [(p, fam, *median(h)) for (p, fam), h in sorted(k40.items(), key=key)])
 for name, t in (('load_curve_2500.csv', c25), ('load_curve_5000.csv', c50)):
     write(name, ['period', 'family', 'load_from', 'n', 'median_ms'], [(p, fam, lk, *median(h)) for (p, fam, lk), h in sorted(t.items(), key=key)])
-print('tables written in data/')
+print(f'tables written in {DATA}/')

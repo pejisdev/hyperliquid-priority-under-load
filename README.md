@@ -13,7 +13,7 @@ FrothyBeverage's first report showed cancels losing to orders signed after them 
 - **Only under load.** Below \~30k tx/s nothing has changed: cancels, ALO orders and ALO modifies land in \~205-245 ms, as before.
 - **For makers, for now:** under load, a fast cancel followed by a new ALO order takes the old quote off the book sooner than a modify, at the cost of a second transaction.
 
-We share this as a measurement, with the code and data to check it. We may well be missing context that the team has.
+We share this as a measurement, with the code and data to check it: everything can be rebuilt from Hyperliquid's public S3 bucket, step by step in [Reproduce](#reproduce). We may well be missing context that the team has.
 
 ## Background
 
@@ -112,13 +112,101 @@ We would welcome the team's view on these:
 
 ## Reproduce
 
+There are two ways to check this work. **A** recomputes every number from the histograms we publish (two minutes, no account needed). **B** rebuilds those histograms yourself from Hyperliquid's public S3 bucket, data that we neither host nor control, and compares them with ours. B also works on any other day, so you can see whether the pattern still holds after we stopped looking.
+
+### What you need
+
+| For | Tools |
+| --- | --- |
+| A | Python 3.9+, `pip install matplotlib` (only for the figure) |
+| B | the above, plus [Rust](https://rustup.rs) (to build `actlat`), [rclone](https://rclone.org/install/), `lz4`, and an AWS account |
+
+Hyperliquid's bucket `hl-mainnet-node-data` is **requester pays**: anyone with an AWS account can read it, and that account pays for the transfer. Put your credentials where rclone and the AWS CLI find them (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` in the environment, or `~/.aws/credentials`). An IAM user with read access to S3 is enough. One US open is 5 files of 1.2 to 2 GB (lz4). From an EC2 machine in Tokyo (ap-northeast-1) only request fees apply; from anywhere else, transfer costs about $0.09-0.11 per GB, roughly $1 per open.
+
+### A. Recompute our numbers from the published histograms
+
+```sh
+git clone https://github.com/pejisdev/hyperliquid-priority-under-load && cd hyperliquid-priority-under-load
+python3 scripts/make_tables.py      # data/opens/*.hist.csv.gz -> data/*.csv, ~2 min
+python3 scripts/part2.py            # data/*.csv -> figure/hyperliquid-priority-part2.png
+git diff --stat data/               # empty: the tables come out identical to the published ones
+```
+
+### B. Rebuild from Hyperliquid's S3
+
+**1. Look at the bucket.**
+
+```sh
+aws s3 ls --request-payer requester s3://hl-mainnet-node-data/replica_cmds/
+# or, with rclone and no config file:
+rclone lsf ":s3,provider=AWS,env_auth=true,region=ap-northeast-1,requester_pays=true:hl-mainnet-node-data/replica_cmds/"
+```
+
+The layout is `replica_cmds/<period>/<YYYYMMDD>/<height>.lz4`. A period folder is named after the time Hyperliquid's writing node started (it changes at each network upgrade); `<height>` is the first block of the file, and each file holds 10,000 blocks (about 12 minutes at the US open). Each line of a decompressed file is one block: its time (`abci_block.time`) and every signed action in it, with the nonce its signer set (`signed_action_bundles`).
+
+**2. Build `actlat` and try one file by hand.**
+
+```sh
+(cd actlat && cargo build --release)
+aws s3 cp --request-payer requester \
+  s3://hl-mainnet-node-data/replica_cmds/2026-11-07T08:18:35Z/20261111/1217440000.lz4 - \
+  | lz4 -dc | actlat/target/release/actlat one > one.summary.csv
+# or, with rclone:
+rclone cat ":s3,provider=AWS,env_auth=true,region=ap-northeast-1,requester_pays=true:hl-mainnet-node-data/replica_cmds/2026-11-07T08:18:35Z/20261111/1217440000.lz4" \
+  | lz4 -dc | actlat/target/release/actlat one > one.summary.csv
+head one.summary.csv                # kind,load_band,n,p25_ms,p50_ms,p75_ms,p90_ms
+```
+
+That file is the one that contains 09:30 New York on Nov 11. `actlat` also writes `one.hist.csv`, `one.load.csv` and `one.out.csv` (formats in the table below).
+
+**3. Rebuild a whole open and compare it with ours.**
+
+```sh
+python3 scripts/fetch_open.py 2026-11-11        # finds the files around 09:30 New York, writes out/opens/2026-11-11.*
+python3 scripts/compare.py out data             # your histogram against the published one
+```
+
+What `compare.py` printed for Nov 11 when we ran it against the public bucket:
+
+```
+2026-11-11: 967,730 rows yours, 967,730 ours, 967,730 identical, 0 different  -> identical
+  median at 40k+ tx/s, ms           yours         ours
+  fast cancel                  245 n=2,060,102    245 n=2,060,102
+  ALO order                    515 n=850,662      515 n=850,662
+  batchModify ALO              535 n=161,383      535 n=161,383
+  modify ALO                   595 n=1,055        595 n=1,055
+  IOC 8 bps                    345 n=22,341       345 n=22,341
+  IOC no fee                   575 n=98,635       575 n=98,635
+```
+
+`fetch_open.py` lists the period folders, reads the first block of candidate files to find the one that contains 09:30 New York, then streams that file, the one before it and three after it into `actlat`. It writes to `out/` and never touches `data/`. `compare.py` checks every row of both histograms (kind, minute, load bucket, 10 ms bin, count) and prints the 40k+ tx/s medians of the main action types side by side. When you read the same files, every row is identical. `--like data` makes `fetch_open.py` read exactly the files listed in `data/opens.csv`, and `--files N` changes how many files are read.
+
+**4. Go further.**
+
+```sh
+python3 scripts/fetch_open.py 2026-11-16        # any day, including days after this write-up
+python3 scripts/make_tables.py out              # out/latency_by_open.csv and the load curves for the opens you rebuilt
+```
+
+`out/latency_by_open.csv` gives the median per action type and load band for each open you rebuilt. If ALO orders and ALO modifies land with fast cancels again at 40k+ tx/s, the issue is gone.
+
+### What is not rebuilt from public data
+
+- **Per account:** `replica_cmds` has no user per action. `acctlat` takes it from `node_order_statuses_by_block`, which a node writes and the public bucket does not carry. With a non-validator node that writes order statuses: `acctlat T0 T1 OUT STATUS_FILE... -- REPLICA_FILE...`, then `python3 scripts/acctan.py OUT`.
+- **Cancels:** maker fills joined to their taker from `node_fills_by_block` (in the same public bucket), with each cancel's signing time from `replica_cmds`. This repository does not include that join; the shares are written at the top of `part2.py`.
+- **Validator bundles:** `mempool_txs` is written by a node and kept two hours; Femtos archives it since Nov 11.
+- **Nov 12** was measured from the Femtos node's own `replica_cmds`. The same files are in the public bucket, under period `2026-11-12T10:43:59Z`.
+
+### Files
+
 | Path | What |
 | --- | --- |
 | `actlat/` | Rust: signed→block latency of every action in `replica_cmds`, by kind and chain load |
-| `acctlat/` | Rust: the same per account (needs a node's order statuses, see below) |
-| `scripts/fetch_open.py` | streams the `replica_cmds` files around one US open from Hyperliquid's S3 into `actlat` |
-| `scripts/make_tables.py` | builds every table below from the raw histograms, no download |
-| `scripts/part2.py` | draws the figure from those tables |
+| `acctlat/` | Rust: the same per account (needs a node's order statuses) |
+| `scripts/fetch_open.py` | rebuilds one open from Hyperliquid's S3 into `out/` |
+| `scripts/compare.py` | compares a rebuilt open with the published one |
+| `scripts/make_tables.py` | every table below from the raw histograms (`data/` by default, or the directory given) |
+| `scripts/part2.py` | draws the figure from `data/` |
 | `scripts/acctan.py` | per-account summary of `acctlat`'s output |
 | `data/opens.csv` | one row per open: date, S3 period folder, files read, hardfork |
 | `data/opens/<date>.hist.csv.gz` | raw histogram of one open: `kind,unix_minute,load_bucket,latency_ms,count` |
@@ -127,35 +215,7 @@ We would welcome the team's view on these:
 | `data/latency_40k_by_period.csv` | median at 40k+ tx/s per period: `period,family,n,median_ms` |
 | `data/load_curve_2500.csv`, `data/load_curve_5000.csv` | median per period, family and load step: `period,family,load_from,n,median_ms` |
 
-In the histograms, `unix_minute` is unix time / 60, `load_bucket` is the number of actions in the block's second floored to 2,500, and `latency_ms` is the lower edge of a 10 ms bin. Periods: `sep11-nov05`, `nov06`, `nov11`, `nov12`. Families (from `actlat`'s kinds): `cancel_fast`, `cancel_nofast`, `alo_order` (no priority fee), `alo_order_fee`, `alo_order_any` (both), `batchmodify_alo`, `modify_alo`, `batchmodify_gtc`, `modify_gtc`, `ioc_8bps`, `ioc_under_8bps`, `ioc_nofee`, `gtc_order`, `frontend_market`, `schedule_cancel`.
-
-**1. Check the numbers from the histograms (no download)**
-
-```sh
-python3 -m pip install matplotlib
-python3 scripts/make_tables.py   # ~2 min
-python3 scripts/part2.py         # redraws figure/hyperliquid-priority-part2.png
-```
-
-**2. Rebuild a histogram from Hyperliquid's public data**
-
-```sh
-(cd actlat && cargo build --release)
-# needs rclone, lz4 and AWS credentials in the environment (the bucket is requester pays)
-python3 scripts/fetch_open.py 20261105      # one file before the 09:30 New York open + 4 after
-```
-
-One open is 5 files of 1.2 to 2 GB (lz4). From AWS Tokyo (ap-northeast-1) only request fees apply; from outside AWS, transfer is about $0.09-0.11 per GB, roughly $1 per open.
-
-For every signed action of every bundle, `actlat` computes `block time - nonce` and adds it to a 10 ms histogram keyed by action kind and by the number of actions in the block's second. Kinds: `cancel` / `cancelByCloid` with or without `fast`; orders by time-in-force (IOC also by priority fee: none, under 8 bps, 8 bps and more); `modify` / `batchModify` by the time-in-force of the new order(s) and by batch size.
-
-The Nov 12 open was read from the Femtos node's own `replica_cmds`; the same files are in the public bucket under period `2026-11-12T10:43:59Z`.
-
-**3. Not rebuilt from public data**
-
-- **Per account:** `replica_cmds` has no user per action. `acctlat` takes it from `node_order_statuses_by_block`, which a node writes and the public bucket does not carry. With a non-validator node that writes order statuses: `acctlat T0 T1 OUT STATUS_FILE... -- REPLICA_FILE...`, then `python3 scripts/acctan.py OUT`.
-- **Cancels:** maker fills joined to their taker from `node_fills_by_block` (public), with each cancel's signing time from `replica_cmds`. The shares are written at the top of `part2.py`.
-- **Validator bundles:** `mempool_txs` is written by a node and kept two hours; Femtos archives it since Nov 11.
+In the histograms, `unix_minute` is unix time / 60, `load_bucket` is the number of actions in the block's second floored to 2,500, and `latency_ms` is the lower edge of a 10 ms bin (-50 to 5,000 ms). `actlat` puts each action in a kind: `cancel` / `cancelByCloid` with or without `fast`; orders by time-in-force, IOC also by priority fee (none, under 8 bps, 8 bps and more); `modify` / `batchModify` by the time-in-force of the new order(s) and by batch size. Periods: `sep11-nov05`, `nov06`, `nov11`, `nov12`. Families: `cancel_fast`, `cancel_nofast`, `alo_order` (no priority fee), `alo_order_fee`, `alo_order_any` (both), `batchmodify_alo`, `modify_alo`, `batchmodify_gtc`, `modify_gtc`, `ioc_8bps`, `ioc_under_8bps`, `ioc_nofee`, `gtc_order`, `frontend_market`, `schedule_cancel`.
 
 ---
 
