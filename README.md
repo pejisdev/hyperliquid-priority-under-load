@@ -159,4 +159,6 @@ The Nov 12 open was read from the Femtos node's own `replica_cmds`; the same fil
 
 ---
 
+Decentralization and open nodes let anyone check this data independently. We see that as a strength, not a weakness, next to other perp DEXs, and we thank Hyperliquid for making it all available.
+
 Research with FrothyBeverage. Data and code by [femtos.xyz](https://femtos.xyz), Hyperliquid data: HyperCore, HyperEVM, Elysium.
