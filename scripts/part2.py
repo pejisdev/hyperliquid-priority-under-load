@@ -1,9 +1,9 @@
-import re, math, collections
+import re, math, collections, csv
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-# part2.py : the paper's figure, from the tables in data/ (make_tables.sh). Writes figure/hyperliquid-priority-part2.png
+# part2.py : the paper's figure, from the tables in data/ (make_tables.py). Writes figure/hyperliquid-priority-part2.png
 import os
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 H = os.path.join(ROOT, 'data') + '/'
@@ -26,19 +26,17 @@ SB = {  # window -> ioc -> [(n, pct) per band <20k, 20-30k, 30-40k, 40k+]
 def wilson(n, p, z=1.96):
     p = p / 100; d = 1 + z * z / n; c = (p + z * z / (2 * n)) / d; h = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / d
     return 100 * (c - h), 100 * (c + h)
-# 44 opens, 40k+ band
-T = []
-for l in open(H + 'tab44.txt'):
-    if not l[:8].isdigit(): continue
-    p = l.split('|'); d, hf = p[0].split(); v = [int(t.split('(')[0]) for t in p[3].split()]
-    T.append((d, int(hf[2:]), v[0], v[2], v[6], v[8], v[9], v[4]))
+# every open, 40k+ band: (date, hardfork, fast cancel, ALO order, modify ALO, IOC 8 bps, IOC no fee, batchModify ALO)
+BO = collections.defaultdict(dict); HF = {}
+for r in csv.DictReader(open(H + 'latency_by_open.csv')):
+    if r['load_band'] == '40k+': BO[r['date']][r['family']] = int(r['median_ms']); HF[r['date']] = int(r['hardfork'])
+T = [(d.replace('-', ''), HF[d], *(v[f] for f in ('cancel_fast', 'alo_order', 'modify_alo', 'ioc_8bps', 'ioc_nofee', 'batchmodify_alo')))
+     for d, v in BO.items()]
 THIN = {'20261030', '20261102', '20261103'}  # under 4% of the window's seconds above 40k tx/s
 mon = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 lab = lambda d: f'{int(d[6:])} {mon[int(d[4:6]) - 1]}'
 # load curves
-LC = collections.defaultdict(dict)
-for l in open(H + 'lc.tsv'):
-    per, fam, lk, n, med = l.split('\t'); LC[(per, fam)][int(lk)] = (int(n), int(med))
+K40 = {(r['period'], r['family']): int(r['median_ms']) for r in csv.DictReader(open(H + 'latency_40k_by_period.csv'))}
 
 # ---------- figure
 fig = plt.figure(figsize=(12.5, 13.4), dpi=200)
@@ -101,12 +99,11 @@ ax.text(0, 1.02, 'Each point is one US open (weekdays): median time from signing
 
 # panel 3: latency vs load, two panels side by side (5k tx/s bins)
 LC5 = collections.defaultdict(dict)
-for fn in ('lc5_before.tsv', 'lc5_nov12.tsv'):
-    for l in open(H + fn):
-        per, fam, lk, n, med = l.split('\t'); LC5[(per, fam)][int(lk)] = (int(n), int(med))
+for r in csv.DictReader(open(H + 'load_curve_5000.csv')):
+    LC5[(r['period'], r['family'])][int(r['load_from'])] = (int(r['n']), int(r['median_ms']))
 sub = gs[2, 0].subgridspec(1, 2, wspace=0.08)
-LSTY = [('IOC0', GR, 2, 0.9, 'o', 4), ('bMod_A', GN, 2, 0.75, 's', 5), ('cxl_f', BL, 2, 0.75, 'o', 5), ('IOC8', OR, 2, 0.75, 'D', 4.5)]
-for j, (per, title, nmin) in enumerate([('before', 'Sep 11–Nov 5', 5000), ('nov12', 'Nov 12 (v112)', 1500)]):
+LSTY = [('ioc_nofee', GR, 2, 0.9, 'o', 4), ('batchmodify_alo', GN, 2, 0.75, 's', 5), ('cancel_fast', BL, 2, 0.75, 'o', 5), ('ioc_8bps', OR, 2, 0.75, 'D', 4.5)]
+for j, (per, title, nmin) in enumerate([('sep11-nov05', 'Sep 11–Nov 5', 5000), ('nov12', 'Nov 12 (v112)', 1500)]):
     ax = fig.add_subplot(sub[0, j])
     # same width, see-through, one marker shape each: the three overlapping lines all stay visible
     for fam, c, lw, a, mk, ms in LSTY:
@@ -132,10 +129,10 @@ fig.text((sub_x0 + pos.x1) / 2, pos.y0 - 0.032, 'Chain transactions per second (
 
 # panel 4: every action, before vs Nov 12 (40k+)
 ax = fig.add_subplot(gs[1, 1])
-rows = [('batchModify, ALO', 'bMod_A', GN), ('modify, ALO', 'mod_A', GN), ('ALO order', 'ALO', GN), ('IOC, 8+ bps', 'IOC8', OR), ('Fast cancel', 'cxl_f', BL),
-        ('IOC, under 8 bps', 'IOClow', GR), ('IOC, no fee', 'IOC0', GR), ('GTC order', 'GTC', GR), ('Cancel, no flag', 'cxl_nf', GR), ('batchModify, GTC', 'bMod_G', GR), ('scheduleCancel', 'scheduleCancel', GR)]
+rows = [('batchModify, ALO', 'batchmodify_alo', GN), ('modify, ALO', 'modify_alo', GN), ('ALO order', 'alo_order_any', GN), ('IOC, 8+ bps', 'ioc_8bps', OR), ('Fast cancel', 'cancel_fast', BL),
+        ('IOC, under 8 bps', 'ioc_under_8bps', GR), ('IOC, no fee', 'ioc_nofee', GR), ('GTC order', 'gtc_order', GR), ('Cancel, no flag', 'cancel_nofast', GR), ('batchModify, GTC', 'batchmodify_gtc', GR), ('scheduleCancel', 'schedule_cancel', GR)]
 for i, (name, fam, c) in enumerate(rows):
-    b = LC[('before', fam)][99999][1]; a = LC[('nov12', fam)][99999][1]
+    b = K40[('sep11-nov05', fam)]; a = K40[('nov12', fam)]
     y = len(rows) - 1 - i
     ax.plot([b, a], [y, y], color=c, lw=2.2, alpha=0.8 if c != GR else 0.6, solid_capstyle='round')
     ax.scatter([b], [y], s=26, facecolor='white', edgecolor=c if c != GR else '#888', lw=1.4, zorder=3)

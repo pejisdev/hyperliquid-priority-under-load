@@ -2,7 +2,7 @@
 // The account comes from node_order_statuses_by_block (user per oid and per cloid), joined to replica_cmds actions:
 //   order / batchModify / modify -> cloid of the (first) order, else the modified oid; cancelByCloid -> cloid; cancel -> oid.
 // usage: acctlat T0 T1 OUT STATUS_FILE... -- REPLICA_FILE...      (T0/T1 = "2026-11-12T14:30:00", block time UTC)
-// writes OUT.tsv: user kind band n p25 p50 p75     and OUT.cover.tsv: kind band total resolved
+// writes OUT.csv: user,kind,load_band,n,p25_ms,p50_ms,p75_ms   and OUT.cover.csv: kind,load_band,total,resolved
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::Value;
@@ -168,14 +168,16 @@ fn main() {
         let c = cover.entry((k, b)).or_default(); c.0 += 1;
         if u != u32::MAX { c.1 += 1; agg.entry((u, k, b)).or_default().push(lat); }
     }
-    let mut f = std::io::BufWriter::new(std::fs::File::create(format!("{out}.tsv")).unwrap());
+    let mut f = std::io::BufWriter::new(std::fs::File::create(format!("{out}.csv")).unwrap());
+    writeln!(f, "user,kind,load_band,n,p25_ms,p50_ms,p75_ms").unwrap();
     for ((u, k, b), mut v) in agg {
         if v.len() < 5 { continue; }
         v.sort_unstable();
         let q = |p: f64| v[((v.len() - 1) as f64 * p).round() as usize];
-        writeln!(f, "{}\t{}\t{}\t{}\t{}\t{}\t{}", names[u as usize], knames[k as usize], b, v.len(), q(0.25), q(0.5), q(0.75)).unwrap();
+        writeln!(f, "{},{},{},{},{},{},{}", names[u as usize], knames[k as usize], b, v.len(), q(0.25), q(0.5), q(0.75)).unwrap();
     }
-    let mut f = std::io::BufWriter::new(std::fs::File::create(format!("{out}.cover.tsv")).unwrap());
-    for ((k, b), (t, r)) in cover { writeln!(f, "{}\t{}\t{}\t{}", knames[k as usize], b, t, r).unwrap(); }
+    let mut f = std::io::BufWriter::new(std::fs::File::create(format!("{out}.cover.csv")).unwrap());
+    writeln!(f, "kind,load_band,total,resolved").unwrap();
+    for ((k, b), (t, r)) in cover { writeln!(f, "{},{},{},{}", knames[k as usize], b, t, r).unwrap(); }
     eprintln!("done");
 }

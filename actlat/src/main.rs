@@ -1,9 +1,11 @@
 // actlat: signed->block latency (block time - nonce) of every action kind, by chain load (actions/s of the block's second)
-// stdin: replica_cmds lines. stdout: kind  bucket  n  p25  p50  p75  p90  (ms, latencies kept in -50..5000)
-// actlat OUT (v2): also writes the raw material, so any later question is a query, not a re-download:
-//   OUT.hist.tsv  kind  minute(unix/60)  load_k(actions/s of the second, floor to 2.5k)  bin_ms(10 ms bins, -50..5000)  count
-//   OUT.load.tsv  second(unix)  actions  blocks
-//   OUT.out.tsv   kind  minute  below(-50)  above(5000)  (latencies outside the histogram)
+// stdin: replica_cmds lines. stdout (CSV): kind,load_band,n,p25_ms,p50_ms,p75_ms,p90_ms  (latencies kept in -50..5000 ms)
+// actlat OUT also writes the raw material (CSV with a header), so any later question is a query, not a re-download:
+//   OUT.hist.csv  kind,unix_minute,load_bucket,latency_ms,count
+//                 unix_minute = unix time / 60; load_bucket = actions in the block's second, floored to 2,500;
+//                 latency_ms = lower edge of the 10 ms bin (-50..5000)
+//   OUT.load.csv  unix_second,actions,blocks
+//   OUT.out.csv   kind,unix_minute,below_minus_50ms,above_5000ms  (latencies outside the histogram)
 use serde::Deserialize;
 use serde_json::value::RawValue;
 use serde_json::Value;
@@ -114,10 +116,12 @@ fn main() {
         }
     }
     if let Some(o) = &out {
-        let mut f = std::io::BufWriter::new(std::fs::File::create(format!("{o}.load.tsv")).unwrap());
-        for (s, n) in &tx { writeln!(f, "{s}\t{n}\t{}", blocks.get(s).unwrap_or(&0)).unwrap(); }
-        let mut f = std::io::BufWriter::new(std::fs::File::create(format!("{o}.out.tsv")).unwrap());
-        for ((k, m), (a, b)) in &outl { writeln!(f, "{k}\t{m}\t{a}\t{b}").unwrap(); }
+        let mut f = std::io::BufWriter::new(std::fs::File::create(format!("{o}.load.csv")).unwrap());
+        writeln!(f, "unix_second,actions,blocks").unwrap();
+        for (s, n) in &tx { writeln!(f, "{s},{n},{}", blocks.get(s).unwrap_or(&0)).unwrap(); }
+        let mut f = std::io::BufWriter::new(std::fs::File::create(format!("{o}.out.csv")).unwrap());
+        writeln!(f, "kind,unix_minute,below_minus_50ms,above_5000ms").unwrap();
+        for ((k, m), (a, b)) in &outl { writeln!(f, "{k},{m},{a},{b}").unwrap(); }
         // (kind, minute, load_k) -> bins
         let mut fine: BTreeMap<(String, i64, u64), Vec<u64>> = BTreeMap::new();
         for ((sec, k), h) in &hist {
@@ -125,9 +129,10 @@ fn main() {
             let a = fine.entry((k.clone(), sec.div_euclid(60), lk)).or_insert_with(|| vec![0; 506]);
             for (i, c) in h.iter().enumerate() { a[i] += *c as u64; }
         }
-        let mut f = std::io::BufWriter::new(std::fs::File::create(format!("{o}.hist.tsv")).unwrap());
+        let mut f = std::io::BufWriter::new(std::fs::File::create(format!("{o}.hist.csv")).unwrap());
+        writeln!(f, "kind,unix_minute,load_bucket,latency_ms,count").unwrap();
         for ((k, m, lk), a) in &fine {
-            for (i, c) in a.iter().enumerate() { if *c > 0 { writeln!(f, "{k}\t{m}\t{lk}\t{}\t{c}", i as i64 * 10 - 50).unwrap(); } }
+            for (i, c) in a.iter().enumerate() { if *c > 0 { writeln!(f, "{k},{m},{lk},{},{c}", i as i64 * 10 - 50).unwrap(); } }
         }
     }
     let bk = |v: u64| if v < 20000 { "<20k" } else if v < 30000 { "20-30k" } else if v < 40000 { "30-40k" } else { "40k+" };
@@ -139,9 +144,10 @@ fn main() {
         let a = agg.entry((k, "all")).or_insert_with(|| vec![0; 506]);
         for (i, c) in h.iter().enumerate() { a[i] += *c as u64; }
     }
+    println!("kind,load_band,n,p25_ms,p50_ms,p75_ms,p90_ms");
     for ((k, b), a) in agg {
         let n: u64 = a.iter().sum();
         let q = |f: f64| { let t = (n as f64 * f).ceil() as u64; let mut acc = 0; for (i, c) in a.iter().enumerate() { acc += c; if acc >= t.max(1) { return i as i64 * 10 - 45; } } 0 };
-        println!("{k}\t{b}\t{n}\t{}\t{}\t{}\t{}", q(0.25), q(0.5), q(0.75), q(0.9));
+        println!("{k},{b},{n},{},{},{},{}", q(0.25), q(0.5), q(0.75), q(0.9));
     }
 }

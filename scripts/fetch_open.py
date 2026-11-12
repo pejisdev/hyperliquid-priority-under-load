@@ -2,9 +2,9 @@
 # fetch_open.py YYYYMMDD [nfiles] : runs actlat over the replica_cmds files around the US cash open (09:30 New York) of that day,
 # streamed from Hyperliquid's public S3 bucket (requester pays: your AWS credentials, through rclone env_auth).
 # Starts one file before the open (calm reference), nfiles in all (the paper used 5, about an hour).
-# Writes data/opens/a.<day>.hist.tsv.gz, a.<day>.load.tsv, a.<day>.out.tsv, act.<day>.tsv, meta.<day>.tsv.
+# Writes data/opens/<date>.hist.csv.gz, <date>.load.csv, <date>.out.csv, <date>.summary.csv, and the open's row in data/opens.csv.
 # Needs: rclone, lz4, and actlat built (cargo build --release in actlat/).
-import subprocess, sys, json, re, datetime, os
+import subprocess, sys, json, re, datetime, os, csv
 from zoneinfo import ZoneInfo
 R = ":s3,provider=AWS,env_auth=true,region=ap-northeast-1,requester_pays=true:hl-mainnet-node-data/replica_cmds"
 D = sys.argv[1]; NF = int(sys.argv[2]) if len(sys.argv) > 2 else 5
@@ -40,6 +40,13 @@ for p in reversed(periods):
 if not best: print(f'{D} no file'); sys.exit()
 p, hs, tk, hf = best
 cmd = ' ; '.join(f'rclone cat "{R}/{p}/{D}/{h}.lz4" 2>/dev/null | lz4 -dc' for h in hs)
-subprocess.run(f'( {cmd} ) | {ACTLAT} a.{D} > act.{D}.tsv && gzip -f a.{D}.hist.tsv', shell=True)
-meta = f'{D}\t{p}\t{",".join(map(str, hs))}\t{tk.isoformat()}\t{T.isoformat()}\thf{hf}'
-open(f'meta.{D}.tsv', 'w').write(meta + '\n'); print('done', meta)
+day = f'{D[:4]}-{D[4:6]}-{D[6:]}'
+subprocess.run(f'( {cmd} ) | {ACTLAT} {day} > {day}.summary.csv && gzip -f {day}.hist.csv', shell=True, check=True)
+# one row per open in data/opens.csv (replaced if the open was already there)
+OPENS = os.path.join(ROOT, 'data', 'opens.csv')
+HEAD = ['date', 's3_period', 'files', 'open_file_first_block_utc', 'us_open_utc', 'hardfork']
+rows = [r for r in csv.DictReader(open(OPENS))] if os.path.exists(OPENS) else []
+rows = [r for r in rows if r['date'] != day] + [dict(zip(HEAD, [day, p, ' '.join(map(str, hs)), tk.isoformat(), T.isoformat(), hf]))]
+with open(OPENS, 'w', newline='') as f:
+    w = csv.DictWriter(f, HEAD, lineterminator='\n'); w.writeheader(); w.writerows(sorted(rows, key=lambda r: r['date']))
+print('done', day, p, ' '.join(map(str, hs)), f'hardfork {hf}')

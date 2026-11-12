@@ -1,15 +1,15 @@
 # per-account check, 40k+ seconds: same accounts, fast cancel vs ALO order / batchModify ALO
 import collections, sys
-P = sys.argv[1] if len(sys.argv) > 1 else 'acct12'
+import csv
+P = sys.argv[1] if len(sys.argv) > 1 else 'acct'   # acctlat's OUT prefix: reads OUT.csv and OUT.cover.csv
 R = collections.defaultdict(dict)  # user -> kind -> (n, p50)
-for l in open(P + '.tsv'):
-    u, k, b, n, p25, p50, p75 = l.split('\t')
-    if b != '40k+': continue
-    R[u][k] = (int(n), int(p50))
+for r in csv.DictReader(open(P + '.csv')):
+    if r['load_band'] != '40k+': continue
+    R[r['user']][r['kind']] = (int(r['n']), int(r['p50_ms']))
 print('coverage at 40k+ (kind, total, resolved %):')
-for l in sorted(open(P + '.cover.tsv'), key=lambda x: -int(x.split('\t')[2])):
-    k, b, t, r = l.split('\t')
-    if b == '40k+' and int(t) > 20000: print(f'  {k:28s} {int(t):9d} {100*int(r)/int(t):5.1f} %')
+for r in sorted(csv.DictReader(open(P + '.cover.csv')), key=lambda r: -int(r['total'])):
+    k, b, t, res = r['kind'], r['load_band'], int(r['total']), int(r['resolved'])
+    if b == '40k+' and t > 20000: print(f'  {k:28s} {t:9d} {100*res/t:5.1f} %')
 def canc(d):
     c = [d[k] for k in ('cancel_fast', 'cancelByCloid_fast') if k in d]
     return max(c) if c else None
