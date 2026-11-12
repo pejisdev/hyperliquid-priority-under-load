@@ -47,7 +47,7 @@ fig.text(0.07, 0.910, 'Measured on our own node: every block (replica_cmds), eve
 
 # panel 1: moving a quote on Nov 12, 40k+
 ax = fig.add_subplot(gs[1, 0])
-rows = [('batchModify, ALO', 505, 505), ('modify, ALO', 575, 575), ('fast cancel + new ALO order', 255, 495)]
+rows = [('batchModify, ALO', 505, 505), ('modify, ALO', 575, 575), ('fast cancel + new ALO order, sent together', 255, 495)]
 for k, (name, off, on) in enumerate(rows):
     y = len(rows) - 1 - k
     ax.barh(y, off, height=0.42, color='#d6d3cb', lw=0)

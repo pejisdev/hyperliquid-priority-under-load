@@ -67,9 +67,9 @@ Median signed→block, ms:
 | --- | --- | --- | --- |
 | batchModify, ALO | 505 | 505 | 1 |
 | modify, ALO | 575 | 575 | 1 |
-| fast cancel, then a new ALO order | 255 | 485-505 | 2 |
+| fast cancel and a new ALO order, sent together | 255 | 485-505 | 2 |
 
-Under load, cancel + place takes the old quote off the book about 250 ms sooner. The new quote lands at about the same time, and it costs two transactions instead of one, which counts against rate limits and block space. Below \~30k tx/s there is nothing to gain. If many makers switched, it would add load exactly when the chain is busiest, which is why we think the modify path is worth a look.
+Under load, cancel + place takes the old quote off the book about 250 ms sooner. The new quote is an ALO order, slowed like the modifies, so it lands at about the same time as a modify would, and it costs two transactions instead of one, which counts against rate limits and block space. Below \~30k tx/s there is nothing to gain. If many makers switched, it would add load exactly when the chain is busiest, which is why we think the modify path is worth a look.
 
 ## Accounts
 
