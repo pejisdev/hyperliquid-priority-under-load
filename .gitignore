@@ -2,3 +2,6 @@ target/
 __pycache__/
 out/
 one.*
+o.20*
+groups.tsv
+labels.tsv

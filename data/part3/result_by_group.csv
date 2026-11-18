@@ -1,0 +1,11 @@
+group,addresses,maker_volume_nov6_13_usd_m,maker_bps_before_nov6,maker_bps_nov6_13,as_maker_usd_k,as_taker_usd_k,net_usd_k,net_before_same_volume_usd_k
+Linked group 1,41,263,1.09,-3.08,-81.0,141.0,60.0,76.2
+Firm A,58,157,1.37,-2.52,-39.7,113.9,74.2,72.5
+Firm B,2,97,-0.77,-1.95,-19.0,2.0,-17.0,-4.0
+Firm C,13,55,-1.29,-1.84,-10.1,24.1,14.0,-1.4
+Firm D,1,54,1.9,-0.8,-4.3,3.3,-1.0,10.9
+Firm E,1,49,0.77,-1.72,-8.4,78.0,69.6,28.0
+Linked group 2,6,14,0.35,-6.13,-8.6,39.3,30.7,23.2
+Other main makers,227,574,1.39,-1.39,-79.9,96.7,16.8,120.7
+Everyone else,67127,1033,-0.41,-1.92,-198.8,-48.4,-247.2,-224.5
+All accounts,67476,2296,0.34,-1.96,-449.8,449.8,0.0,
